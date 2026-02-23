@@ -1,0 +1,35 @@
+# docs/prometheus.yml
+# =====================
+# Prometheus scrape configuration.
+#
+# Prometheus "scrapes" (polls) your app's /metrics endpoint every N seconds
+# and stores the time-series data. Grafana then queries Prometheus to
+# render the dashboards.
+#
+# The FastAPI app exposes Prometheus metrics automatically via the
+# prometheus-fastapi-instrumentator library (registered in main.py Phase 8).
+
+global:
+  scrape_interval: 15s        # scrape every 15 seconds (default: 1 min)
+  evaluation_interval: 15s    # evaluate alerting rules every 15 seconds
+  scrape_timeout: 10s
+
+  # Labels added to every metric from this Prometheus instance
+  external_labels:
+    env: development
+    project: ai_decision_engine
+
+# ─── SCRAPE TARGETS ──────────────────────────────────────────
+scrape_configs:
+
+  # The FastAPI app — expose /metrics endpoint
+  - job_name: "ai_decision_engine_api"
+    static_configs:
+      - targets: ["api:8000"]     # service name in docker-compose network
+    metrics_path: "/metrics"
+    scrape_interval: 10s
+
+  # Prometheus itself (meta-monitoring)
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]

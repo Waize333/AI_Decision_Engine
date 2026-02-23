@@ -1,0 +1,183 @@
+# ============================================================
+# docker-compose.yml
+# ============================================================
+# PURPOSE:
+#   Defines all services needed to run the AI Decision Engine
+#   locally. One command starts everything:
+#
+#     docker-compose up -d
+#
+# SERVICES:
+#   api         — FastAPI application (our code)
+#   postgres    — PostgreSQL: relational metadata (users, models)
+#   mongodb     — MongoDB: inference logs, feedback, drift
+#   redis       — Redis: cache + rate limiting
+#   prometheus  — Metrics scraper
+#   grafana     — Metrics dashboard
+#
+# NETWORKING:
+#   All services share the 'ai_engine_network' bridge network.
+#   Services talk to each other by service name (e.g. postgres:5432).
+#
+# VOLUMES:
+#   Named volumes persist data across container restarts.
+#   Without volumes, DB data is lost every time containers restart.
+# ============================================================
+
+version: "3.9"
+
+networks:
+  ai_engine_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  mongodb_data:
+  redis_data:
+  prometheus_data:
+  grafana_data:
+
+
+services:
+
+  # ─── API ─────────────────────────────────────────────────
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ai_engine_api
+    restart: unless-stopped
+    ports:
+      - "8000:8000" # FastAPI app
+    environment:
+      # Override all settings — these match .env.example
+      APP_ENV: development
+      APP_DEBUG: "true"
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/ai_decision_engine
+      MONGO_URL: mongodb://mongo:mongo@mongodb:27017/ai_decision_engine
+      MONGO_DB: ai_decision_engine
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: dev-secret-key-change-in-production
+      LOG_LEVEL: DEBUG
+      LOG_FORMAT: text
+    depends_on:
+      postgres:
+        condition: service_healthy # wait until postgres is ready
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ai_engine_network
+    volumes:
+      # Mount source for live reload in development
+      - ./backend/app:/app/app
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/api/v1/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ─── POSTGRESQL ──────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: ai_engine_postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432" # expose for local DB clients (TablePlus, DBeaver)
+    environment:
+      POSTGRES_DB: ai_decision_engine
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - ai_engine_network
+    healthcheck:
+      # Check if postgres is accepting connections
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d ai_decision_engine" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ─── MONGODB ─────────────────────────────────────────────
+  mongodb:
+    image: mongo:7.0
+    container_name: ai_engine_mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017" # expose for local MongoDB clients (Compass)
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: mongo
+      MONGO_INITDB_ROOT_PASSWORD: mongo
+      MONGO_INITDB_DATABASE: ai_decision_engine
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - ai_engine_network
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  # ─── REDIS ───────────────────────────────────────────────
+  redis:
+    image: redis:7.2-alpine
+    container_name: ai_engine_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379" # expose for local Redis clients (RedisInsight)
+    command: >
+      redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - ai_engine_network
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ─── PROMETHEUS ──────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: ai_engine_prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090" # Prometheus UI
+    volumes:
+      - ./docs/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.console.libraries=/etc/prometheus/console_libraries"
+      - "--web.console.templates=/etc/prometheus/consoles"
+      - "--storage.tsdb.retention.time=30d"
+    networks:
+      - ai_engine_network
+
+  # ─── GRAFANA ─────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:10.4.0
+    container_name: ai_engine_grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000" # Grafana dashboard
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./docs/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./docs/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    depends_on:
+      - prometheus
+    networks:
+      - ai_engine_network
