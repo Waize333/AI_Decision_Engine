@@ -202,13 +202,24 @@ def analyst_auth_headers(analyst_user: User) -> dict:
 # ─── MODEL FIXTURES ───────────────────────────────────────────────────────────
 
 @pytest_asyncio.fixture
-async def active_model_version(db_session: AsyncSession) -> ModelVersion:
+async def active_model_version(db_session: AsyncSession, tmp_path) -> ModelVersion:
     """An ACTIVE model version — required for inference to work."""
+    import joblib
+    import os
+    
+    # Create a tiny dummy model for tests
+    class DummyModel:
+        def predict_proba(self, X):
+            return [[0.1, 0.9] for _ in X]
+            
+    model_path = os.path.join(tmp_path, "dummy_model.joblib")
+    joblib.dump({"model": DummyModel(), "feature_names": ["transaction_amount", "merchant_category", "hour_of_day", "is_international", "user_account_age_days", "num_transactions_today"]}, model_path)
+
     model = ModelVersion(
         name="test_fraud_detector",
         version_tag="v1",
         description="Test model version",
-        artifact_path="./models/nonexistent.joblib",  # uses stub predictor
+        artifact_path=model_path,
         status=ModelStatus.ACTIVE,
         traffic_percentage=100,
         feature_schema={"amount": "float", "hour": "int"},

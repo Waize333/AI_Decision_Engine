@@ -53,9 +53,6 @@ class ModelRunner:
         - Input array construction (dict → numpy array in correct order)
         - Output parsing (raw numpy output → Python types)
         - Timing measurement
-
-    In Phase 2 we'll train a real RandomForestClassifier.
-    Right now it's a stub so the API works end-to-end.
     """
 
     def __init__(self, version_tag: str, artifact_path: str):
@@ -66,20 +63,25 @@ class ModelRunner:
 
     def _load(self):
         """
-        Load model from disk using joblib.
+        Load model and metadata from disk using joblib.
         Called lazily — model is only loaded on first prediction.
         """
+        import joblib
         try:
-            import joblib
-            self._model = joblib.load(self.artifact_path)
+            payload = joblib.load(self.artifact_path)
+            if isinstance(payload, dict) and "model" in payload:
+                self._model = payload["model"]
+                self._feature_names = payload.get("feature_names", [])
+            else:
+                self._model = payload
             logger.info("model_loaded", version=self.version_tag, path=self.artifact_path)
         except FileNotFoundError:
-            logger.warning(
+            logger.error(
                 "model_file_not_found",
                 path=self.artifact_path,
-                note="Using stub predictions until a real model is trained."
+                note="Make sure to run scripts/train_model.py first."
             )
-            self._model = None
+            raise
 
     def predict(
         self, features: Dict[str, Any]
@@ -91,39 +93,29 @@ class ModelRunner:
             prediction       — the model's output class label (int or str)
             confidence       — probability of the predicted class (0.0–1.0)
             raw_probabilities — full probability vector for all classes
-
-        STUB BEHAVIOUR (before real model is trained):
-          Returns deterministic fake predictions based on input hash.
-          This lets you test the API end-to-end before Phase 2.
         """
         if self._model is None:
             self._load()
 
-        # ── Real model prediction ──────────────────────────────────
-        if self._model is not None:
-            try:
-                import numpy as np
-                # Build feature array in the order the model expects
-                feature_vector = [features.get(f, 0) for f in self._feature_names]
-                X = np.array([feature_vector])
-                proba = self._model.predict_proba(X)[0].tolist()
-                prediction = int(np.argmax(proba))
-                confidence = float(max(proba))
-                return prediction, confidence, proba
-            except Exception as e:
-                logger.error("model_predict_error", error=str(e))
-                # Fall through to stub
+        import numpy as np
+        
+        # Build feature array in the order the model expects
+        feature_vector = [features.get(f, 0) for f in self._feature_names]
+        
+        # If feature_names is empty, try to pass the raw dictionary values, but order is not guaranteed
+        if not self._feature_names:
+            feature_vector = list(features.values())
 
-        # ── Stub prediction (Phase 1 placeholder) ─────────────────
-        # Deterministic based on input so cache tests are consistent
-        feature_hash = int(hashlib.md5(
-            json.dumps(features, sort_keys=True).encode()
-        ).hexdigest(), 16)
-        prediction = feature_hash % 2        # binary: 0 or 1
-        confidence = 0.5 + (feature_hash % 100) / 200.0  # 0.50–1.00
-        proba = [1 - confidence, confidence] if prediction == 1 else [confidence, 1 - confidence]
-
-        return prediction, round(confidence, 4), [round(p, 4) for p in proba]
+        X = np.array([feature_vector])
+        
+        try:
+            proba = self._model.predict_proba(X)[0].tolist()
+            prediction = int(np.argmax(proba))
+            confidence = float(max(proba))
+            return prediction, round(confidence, 4), [round(p, 4) for p in proba]
+        except Exception as e:
+            logger.error("model_predict_error", error=str(e))
+            raise RuntimeError(f"Model prediction failed: {e}")
 
 
 # ─── MODEL REGISTRY (in-process cache) ────────────────────────────────────────
@@ -256,17 +248,37 @@ class InferenceService:
         Find the model version to use for this request.
 
         If a specific version is requested → use that.
-        Otherwise → use the currently ACTIVE version in the registry.
+        Otherwise → check if an experiment is running for A/B testing.
+        If no experiment → use the currently ACTIVE version in the registry.
         """
-        query = select(ModelVersion)
-
         if requested_version:
-            query = query.where(ModelVersion.version_tag == requested_version)
+            query = select(ModelVersion).where(ModelVersion.version_tag == requested_version)
+            result = await db.execute(query)
+            model_version = result.scalar_one_or_none()
         else:
-            query = query.where(ModelVersion.status == ModelStatus.ACTIVE)
+            from app.models.experiment import Experiment, ExperimentStatus
+            import random
+            
+            # Check for a running A/B experiment
+            exp_query = select(Experiment).where(Experiment.status == ExperimentStatus.RUNNING)
+            exp_result = await db.execute(exp_query)
+            running_exp = exp_result.scalar_one_or_none()
 
-        result = await db.execute(query)
-        model_version = result.scalar_one_or_none()
+            if running_exp:
+                # Route based on traffic split (e.g. 70 means 70% control)
+                if random.randint(1, 100) <= running_exp.traffic_split:
+                    target_id = running_exp.control_version_id
+                else:
+                    target_id = running_exp.treatment_version_id
+                
+                query = select(ModelVersion).where(ModelVersion.id == target_id)
+                result = await db.execute(query)
+                model_version = result.scalar_one_or_none()
+            else:
+                # Fallback to standard ACTIVE model
+                query = select(ModelVersion).where(ModelVersion.status == ModelStatus.ACTIVE)
+                result = await db.execute(query)
+                model_version = result.scalar_one_or_none()
 
         if not model_version:
             from fastapi import HTTPException, status

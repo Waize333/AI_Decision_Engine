@@ -26,7 +26,7 @@ USAGE:
 
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import auth, feedback, inference, metrics
+from app.api.v1.endpoints import auth, feedback, inference, metrics, models, experiments
 
 # The top-level v1 router — all sub-routers plug into this
 api_router = APIRouter()
@@ -59,6 +59,18 @@ api_router.include_router(
     metrics.router,
     prefix="/metrics",
     tags=["Metrics & Monitoring"],
+)
+
+api_router.include_router(
+    models.router,
+    prefix="/models",
+    tags=["Models & Targeting"],
+)
+
+api_router.include_router(
+    experiments.router,
+    prefix="/experiments",
+    tags=["A/B Testing"],
 )
 
 # The /health endpoint lives at /health (not /metrics/health)

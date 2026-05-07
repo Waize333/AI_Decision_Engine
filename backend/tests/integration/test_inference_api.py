@@ -10,7 +10,7 @@ WHAT WE TEST:
   ✅ Confidence is between 0.0 and 1.0
   ✅ Unauthenticated requests are rejected
   ✅ Missing features dict is rejected
-  ✅ Same input produces same prediction (stub is deterministic)
+  ✅ Same input produces same prediction (model is deterministic)
   ✅ Client cannot access GET /inference/{id} (analyst-only)
 """
 
@@ -113,7 +113,7 @@ class TestInferencePost:
             json={"features": {}},
             headers=client_auth_headers,
         )
-        # Empty features → stub model returns a prediction
+        # Empty features -> model returns a prediction using 0s
         assert response.status_code == 200
 
 
