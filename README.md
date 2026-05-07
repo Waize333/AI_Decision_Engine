@@ -1,10 +1,10 @@
-# AI Decision Engine 🧠
+# AI Decision Engine 
 
 A production-grade, asynchronous AI inference platform built with FastAPI, PostgreSQL, MongoDB, and Redis. It acts as a comprehensive MLOps backend, providing live inference routing, A/B testing, automatic drift detection, instantaneous rollbacks, and data flywheels (feedback loops). 
 
 Built to replicate the architecture used by top-tier tech companies for deploying machine learning models at scale.
 
-## 🚀 Features
+##  Features
 
 - **Live Inference API:** Ultra-low latency endpoint for serving model predictions.
 - **A/B Testing (Canary Rollouts):** Safely route traffic (e.g., 90/10 split) between stable and experimental models.
@@ -17,11 +17,11 @@ Built to replicate the architecture used by top-tier tech companies for deployin
   - *MongoDB* for highly flexible, high-volume logs (Inference records, Feedback).
   - *Redis* for caching and rate-limiting.
 
-## 🏗️ Architecture
+##  Architecture
 
 The engine is built around a non-blocking asynchronous router. When a request hits the gateway, it is authenticated, rate-limited, and cached. The actual model inference happens in memory, and the results are returned to the client *before* the transaction is logged asynchronously to MongoDB.
 
-## 🛠️ Tech Stack
+##  Tech Stack
 
 - **Framework:** FastAPI (Python)
 - **Databases:** PostgreSQL (asyncpg), MongoDB (Motor), Redis (aioredis)
@@ -29,7 +29,7 @@ The engine is built around a non-blocking asynchronous router. When a request hi
 - **Infrastructure:** Docker, Docker Compose
 - **Monitoring:** Prometheus, Grafana
 
-## 💻 Installation & Setup
+##  Installation & Setup
 
 ### 1. Prerequisites
 - [Docker](https://www.docker.com/) and Docker Compose
@@ -81,7 +81,7 @@ Navigate to **`http://localhost:8000/docs`** to access the interactive Swagger A
 4. **Drift Detection:** Run `python -m scripts.run_drift_detection` to aggregate recent inferences and calculate drift scores.
 5. **A/B Testing:** Train a new model (`python -m scripts.train_model --version v2`), register an experiment (`POST /api/v1/experiments`), and dynamically route traffic to test its performance safely.
 
-## 📜 License
+##  License
 
 **Non-Commercial License (Custom)**
 
